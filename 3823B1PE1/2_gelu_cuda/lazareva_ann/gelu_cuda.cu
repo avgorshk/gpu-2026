@@ -21,7 +21,7 @@ constexpr int   kBlockSize   = 256;
 
 __device__ __forceinline__ float GeluScalar(float x) {
     float z = kSqrt2OverPi * (x + kCoeff * x * x * x);
-    float e = __expf(-2.0f * z);   // быстрый intrinsic exp
+    float e = __expf(-2.0f * z);   
     return x / (1.0f + e);
 }
 
