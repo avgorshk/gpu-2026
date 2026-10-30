@@ -1,6 +1,8 @@
 #include "gelu_ocl.h"
 
+#ifndef CL_TARGET_OPENCL_VERSION
 #define CL_TARGET_OPENCL_VERSION 120
+#endif
 #include <CL/cl.h>
 
 #include <future>
@@ -14,12 +16,8 @@ namespace {
 
 const char source[] = R"CLC(
 float gelu_value(float x) {
-    float z = 1.5957691216057308f * x * fma(0.044715f * x, x, 1.0f);
-    float q = native_exp(-fabs(z));
-    if (x < 0.0f) {
-        return (x * q) / (1.0f + q);
-    }
-    return x / (1.0f + q);
+    float z = 0.7978845608028654f * (x + 0.044715f * x * x * x);
+    return (0.5f * x) * (1.0f + tanh(z));
 }
 
 __kernel void gelu(__global float* data, ulong count) {
@@ -29,11 +27,9 @@ __kernel void gelu(__global float* data, ulong count) {
     }
     if (count - offset >= 4) {
         float4 x = vload4(0, data + offset);
-        float4 z = 1.5957691216057308f * x * fma(0.044715f * x, x, (float4)(1.0f));
-        float4 q = native_exp(-fabs(z));
-        float4 positive = x / (1.0f + q);
-        float4 negative = (x * q) / (1.0f + q);
-        vstore4(select(positive, negative, x < 0.0f), 0, data + offset);
+        float4 z = 0.7978845608028654f * (x + 0.044715f * x * x * x);
+        float4 result = (0.5f * x) * (1.0f + tanh(z));
+        vstore4(result, 0, data + offset);
     } else {
         for (size_t i = offset; i < count; ++i) {
             data[i] = gelu_value(data[i]);
