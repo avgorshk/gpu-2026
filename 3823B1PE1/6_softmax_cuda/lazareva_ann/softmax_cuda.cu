@@ -1,213 +1,185 @@
 #include "softmax_cuda.h"
 
 #include <cuda_runtime.h>
-#include <stdexcept>
-#include <string>
-#include <algorithm>
-#include <climits>
 
-#define CUDA_CHECK(call)                                                   \
-    do {                                                                   \
-        cudaError_t err__ = (call);                                        \
-        if (err__ != cudaSuccess) {                                        \
-            throw std::runtime_error(std::string("CUDA error: ") +         \
-                                      cudaGetErrorString(err__));           \
-        }                                                                  \
-    } while (0)
+#include <cfloat>
+#include <cstddef>
 
 namespace {
 
-constexpr int kMaxBlockDim = 256;
-constexpr int kWarpSize    = 32;
+constexpr int kBlock = 256;
 
-template <typename Op>
-__device__ __forceinline__ float BlockReduce(float val, float* warpBuf,
-                                              Op op, float identity) {
-    const int lane = threadIdx.x % kWarpSize;
-    const int wid  = threadIdx.x / kWarpSize;
-    const int numWarps = (blockDim.x + kWarpSize - 1) / kWarpSize;
-
-    #pragma unroll
-    for (int offset = kWarpSize / 2; offset > 0; offset >>= 1) {
-        val = op(val, __shfl_down_sync(0xffffffff, val, offset));
+__device__ __forceinline__ float WarpReduceMax(float v) {
+#pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        v = fmaxf(v, __shfl_down_sync(0xffffffff, v, offset));
     }
-    if (lane == 0) warpBuf[wid] = val;
-    __syncthreads();
+    return v;
+}
 
-    val = (threadIdx.x < numWarps) ? warpBuf[threadIdx.x] : identity;
+__device__ __forceinline__ float WarpReduceSum(float v) {
+#pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        v += __shfl_down_sync(0xffffffff, v, offset);
+    }
+    return v;
+}
+
+__device__ __forceinline__ float BlockReduceMax(float v) {
+    __shared__ float smem[32];
+    const int lane = threadIdx.x & 31;
+    const int wid = threadIdx.x >> 5;
+    v = WarpReduceMax(v);
+    if (lane == 0) {
+        smem[wid] = v;
+    }
+    __syncthreads();
+    v = (threadIdx.x < (blockDim.x >> 5)) ? smem[lane] : -FLT_MAX;
     if (wid == 0) {
-        #pragma unroll
-        for (int offset = kWarpSize / 2; offset > 0; offset >>= 1) {
-            val = op(val, __shfl_down_sync(0xffffffff, val, offset));
-        }
-        if (lane == 0) warpBuf[0] = val;
+        v = WarpReduceMax(v);
+    }
+    if (threadIdx.x == 0) {
+        smem[0] = v;
     }
     __syncthreads();
-    return warpBuf[0];
+    return smem[0];
 }
 
-struct MaxOp {
-    __device__ __forceinline__ float operator()(float a, float b) const {
-        return a > b ? a : b;
-    }
-};
-struct SumOp {
-    __device__ __forceinline__ float operator()(float a, float b) const {
-        return a + b;
-    }
-};
-
-__global__ void SoftmaxKernelShared(const float* __restrict__ input,
-                                     float* __restrict__ output,
-                                     int row_size) {
-    extern __shared__ float srow[];           
-    __shared__ float warpBuf[kMaxBlockDim / kWarpSize];
-
-    const int row = blockIdx.x;
-    const float* in  = input  + (size_t)row * row_size;
-    float*       out = output + (size_t)row * row_size;
-
-    const int tid    = threadIdx.x;
-    const int stride = blockDim.x;
-
-    float localMax = -FLT_MAX;
-    for (int i = tid; i < row_size; i += stride) {
-        float v = in[i];
-        srow[i] = v;
-        localMax = fmaxf(localMax, v);
+__device__ __forceinline__ float BlockReduceSum(float v) {
+    __shared__ float smem[32];
+    const int lane = threadIdx.x & 31;
+    const int wid = threadIdx.x >> 5;
+    v = WarpReduceSum(v);
+    if (lane == 0) {
+        smem[wid] = v;
     }
     __syncthreads();
-
-    float rowMax = BlockReduce(localMax, warpBuf, MaxOp(), -FLT_MAX);
-
-    float localSum = 0.f;
-    for (int i = tid; i < row_size; i += stride) {
-        float e = __expf(srow[i] - rowMax);
-        srow[i] = e;
-        localSum += e;
+    v = (threadIdx.x < (blockDim.x >> 5)) ? smem[lane] : 0.0f;
+    if (wid == 0) {
+        v = WarpReduceSum(v);
+    }
+    if (threadIdx.x == 0) {
+        smem[0] = v;
     }
     __syncthreads();
+    return smem[0];
+}
 
-    float rowSum = BlockReduce(localSum, warpBuf, SumOp(), 0.f);
-    float invSum = 1.0f / rowSum;
+__global__ void SoftmaxScalarKernel(const float* __restrict__ in, float* __restrict__ out,
+                                    int row_size) {
+    const float* row = in + static_cast<std::size_t>(blockIdx.x) * row_size;
+    float* y = out + static_cast<std::size_t>(blockIdx.x) * row_size;
 
-    for (int i = tid; i < row_size; i += stride) {
-        out[i] = srow[i] * invSum;
+    float local_max = -FLT_MAX;
+    for (int i = threadIdx.x; i < row_size; i += kBlock) {
+        local_max = fmaxf(local_max, row[i]);
+    }
+    local_max = BlockReduceMax(local_max);
+
+    float local_sum = 0.0f;
+    for (int i = threadIdx.x; i < row_size; i += kBlock) {
+        const float e = __expf(row[i] - local_max);
+        y[i] = e;
+        local_sum += e;
+    }
+    local_sum = BlockReduceSum(local_sum);
+    const float inv = 1.0f / local_sum;
+    for (int i = threadIdx.x; i < row_size; i += kBlock) {
+        y[i] *= inv;
     }
 }
 
-__global__ void SoftmaxKernelGlobalFallback(const float* __restrict__ input,
-                                             float* __restrict__ output,
-                                             int row_size) {
-    __shared__ float warpBuf[kMaxBlockDim / kWarpSize];
+__global__ void SoftmaxKernel(const float* __restrict__ in, float* __restrict__ out, int row_size) {
+    const float* row = in + static_cast<std::size_t>(blockIdx.x) * row_size;
+    float* y = out + static_cast<std::size_t>(blockIdx.x) * row_size;
+    const int n4 = row_size >> 2;
 
-    const int row = blockIdx.x;
-    const float* in  = input  + (size_t)row * row_size;
-    float*       out = output + (size_t)row * row_size;
-
-    const int tid    = threadIdx.x;
-    const int stride = blockDim.x;
-
-    float localMax = -FLT_MAX;
-    for (int i = tid; i < row_size; i += stride) {
-        localMax = fmaxf(localMax, in[i]);
+    float local_max = -FLT_MAX;
+    for (int i = threadIdx.x; i < n4; i += kBlock) {
+        const float4 v = reinterpret_cast<const float4*>(row)[i];
+        local_max = fmaxf(local_max, fmaxf(fmaxf(v.x, v.y), fmaxf(v.z, v.w)));
     }
-    float rowMax = BlockReduce(localMax, warpBuf, MaxOp(), -FLT_MAX);
+    local_max = BlockReduceMax(local_max);
 
-    float localSum = 0.f;
-    for (int i = tid; i < row_size; i += stride) {
-        localSum += __expf(in[i] - rowMax);
+    float local_sum = 0.0f;
+    for (int i = threadIdx.x; i < n4; i += kBlock) {
+        const float4 v = reinterpret_cast<const float4*>(row)[i];
+        float4 e;
+        e.x = __expf(v.x - local_max);
+        e.y = __expf(v.y - local_max);
+        e.z = __expf(v.z - local_max);
+        e.w = __expf(v.w - local_max);
+        reinterpret_cast<float4*>(y)[i] = e;
+        local_sum += e.x + e.y + e.z + e.w;
     }
-    float rowSum = BlockReduce(localSum, warpBuf, SumOp(), 0.f);
-    float invSum = 1.0f / rowSum;
+    local_sum = BlockReduceSum(local_sum);
+    const float inv = 1.0f / local_sum;
 
-    for (int i = tid; i < row_size; i += stride) {
-        out[i] = __expf(in[i] - rowMax) * invSum;
+    for (int i = threadIdx.x; i < n4; i += kBlock) {
+        float4 e = reinterpret_cast<float4*>(y)[i];
+        e.x *= inv;
+        e.y *= inv;
+        e.z *= inv;
+        e.w *= inv;
+        reinterpret_cast<float4*>(y)[i] = e;
     }
 }
 
-struct CudaResources {
-    float* d_in  = nullptr;
+struct DeviceCache {
+    float* d_in = nullptr;
     float* d_out = nullptr;
-    size_t capacityElems = 0;
     cudaStream_t stream = nullptr;
-    bool ready = false;
-    int  maxOptinSharedMem = 0;
-
-    void EnsureReady(size_t elems) {
-        if (!ready) {
-            CUDA_CHECK(cudaStreamCreate(&stream));
-
-            int device;
-            CUDA_CHECK(cudaGetDevice(&device));
-            CUDA_CHECK(cudaDeviceGetAttribute(
-                &maxOptinSharedMem,
-                cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
-
-            CUDA_CHECK(cudaFuncSetAttribute(
-                SoftmaxKernelShared,
-                cudaFuncAttributeMaxDynamicSharedMemorySize,
-                maxOptinSharedMem));
-
-            ready = true;
-        }
-        if (elems > capacityElems) {
-            if (d_in)  CUDA_CHECK(cudaFree(d_in));
-            if (d_out) CUDA_CHECK(cudaFree(d_out));
-            CUDA_CHECK(cudaMalloc(&d_in,  elems * sizeof(float)));
-            CUDA_CHECK(cudaMalloc(&d_out, elems * sizeof(float)));
-            capacityElems = elems;
-        }
-    }
-
-    ~CudaResources() {
-        if (d_in)  cudaFree(d_in);
-        if (d_out) cudaFree(d_out);
-        if (ready) cudaStreamDestroy(stream);
-    }
+    std::size_t cap = 0;
 };
 
-CudaResources g_res;
+DeviceCache& Cache() {
+    static DeviceCache cache;
+    return cache;
+}
+
+void EnsureDevice(std::size_t n) {
+    DeviceCache& cache = Cache();
+    if (cache.stream == nullptr) {
+        cudaStreamCreateWithFlags(&cache.stream, cudaStreamNonBlocking);
+    }
+    if (cache.cap >= n) {
+        return;
+    }
+    if (cache.d_in != nullptr) {
+        cudaFree(cache.d_in);
+        cudaFree(cache.d_out);
+    }
+    const std::size_t bytes = n * sizeof(float);
+    cudaMalloc(&cache.d_in, bytes);
+    cudaMalloc(&cache.d_out, bytes);
+    cache.cap = n;
+}
 
 }  // namespace
 
 std::vector<float> SoftmaxCUDA(const std::vector<float>& input, int row_count) {
-    const size_t total = input.size();
-    std::vector<float> output(total);
-    if (total == 0 || row_count == 0) return output;
-
-    const int row_size = static_cast<int>(total / row_count);
-
-    g_res.EnsureReady(total);
-    cudaStream_t stream = g_res.stream;
-
-    float* h_in  = const_cast<float*>(input.data());
-    float* h_out = output.data();
-
-    cudaError_t regIn  = cudaHostRegister(h_in,  total * sizeof(float), cudaHostRegisterDefault);
-    cudaError_t regOut = cudaHostRegister(h_out, total * sizeof(float), cudaHostRegisterDefault);
-
-    CUDA_CHECK(cudaMemcpyAsync(g_res.d_in, h_in, total * sizeof(float),
-                               cudaMemcpyHostToDevice, stream));
-
-    const int block = std::min(row_size, kMaxBlockDim);
-    const size_t sharedBytes = (size_t)row_size * sizeof(float);
-
-    if (sharedBytes <= (size_t)g_res.maxOptinSharedMem) {
-        SoftmaxKernelShared<<<row_count, block, sharedBytes, stream>>>(
-            g_res.d_in, g_res.d_out, row_size);
-    } else {
-        SoftmaxKernelGlobalFallback<<<row_count, block, 0, stream>>>(
-            g_res.d_in, g_res.d_out, row_size);
+    if (input.empty() || row_count <= 0) {
+        return {};
     }
 
-    CUDA_CHECK(cudaMemcpyAsync(h_out, g_res.d_out, total * sizeof(float),
-                               cudaMemcpyDeviceToHost, stream));
+    const int n = static_cast<int>(input.size());
+    const int row_size = n / row_count;
+    EnsureDevice(static_cast<std::size_t>(n));
+    DeviceCache& cache = Cache();
+    const std::size_t bytes = static_cast<std::size_t>(n) * sizeof(float);
 
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    cudaMemcpyAsync(cache.d_in, input.data(), bytes, cudaMemcpyHostToDevice, cache.stream);
 
-    if (regIn  == cudaSuccess) cudaHostUnregister(h_in);
-    if (regOut == cudaSuccess) cudaHostUnregister(h_out);
+    std::vector<float> output(static_cast<std::size_t>(n));
 
+    if ((row_size & 3) == 0) {
+        SoftmaxKernel<<<row_count, kBlock, 0, cache.stream>>>(cache.d_in, cache.d_out, row_size);
+    } else {
+        SoftmaxScalarKernel<<<row_count, kBlock, 0, cache.stream>>>(cache.d_in, cache.d_out,
+                                                                    row_size);
+    }
+
+    cudaMemcpyAsync(output.data(), cache.d_out, bytes, cudaMemcpyDeviceToHost, cache.stream);
+    cudaStreamSynchronize(cache.stream);
     return output;
 }
