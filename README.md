@@ -649,6 +649,7 @@ std::vector<float> GeluOCL(const std::vector<float>& input, int platform) {
 |3823B1PE4|remizov_kirill|0.0360|6|
 |3823B1PE3|dergachev_arseniy|0.0363|1|
 |3823B1PE1|otcheskov_semyon|0.0363|4|
+|3823B1PE2|akhmetov_daniil|0.0364|8|
 |3823B1PE1|rusakova_aleksandra|0.0370|2|
 |3823B1PE2|zyuzin_nikita|0.0386|7|
 |3823B1PE1|ivanova_polina|0.0399|7|
@@ -823,16 +824,16 @@ Passed: 7
 ## 3823B1PE2
 |Group|Name|Passed|Score|
 |-----|----|------|-----|
-|3823B1PE2|akhmetov_daniil|4/8|213|
-|3823B1PE2|klimenko_vladislav|**8/8**|**466**|
+|3823B1PE2|akhmetov_daniil|5/8|268|
+|3823B1PE2|klimenko_vladislav|**8/8**|**465**|
 |3823B1PE2|kolotukhin_alexander|3/8|167|
-|3823B1PE2|kotelnikova_anastasia|**8/8**|**452**|
-|3823B1PE2|sinev_artem|7/8|399|
+|3823B1PE2|kotelnikova_anastasia|**8/8**|**451**|
+|3823B1PE2|sinev_artem|7/8|398|
 |3823B1PE2|tsyplakov_kirill|4/8|205|
 |3823B1PE2|vasiliev_mikhail|**8/8**|**470**|
 |3823B1PE2|viderman_aleksandra|**8/8**|**468**|
-|3823B1PE2|zorin_danila_artemovich|**8/8**|**452**|
-|3823B1PE2|zyuzin_nikita|7/8|380|
+|3823B1PE2|zorin_danila_artemovich|**8/8**|**451**|
+|3823B1PE2|zyuzin_nikita|7/8|379|
 
 Passed: 5
 
