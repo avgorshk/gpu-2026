@@ -1,8 +1,0 @@
-/home/crazyproger/sandbox/gpu-2026/3823B1PE1/4_block_gemm_cuda/lazareva_ann/block_gemm_cuda.cu:13:76: warning: backslash and newline separated by space
-   13 |         }                                                                  \
-      |                                                                             
-/home/crazyproger/sandbox/gpu-2026/3823B1PE1/4_block_gemm_cuda/lazareva_ann/block_gemm_cuda.cu(36): error: identifier "tid" is undefined
-      const int loadRow = tid / 8;
-                          ^
-
-1 error detected in the compilation of "/home/crazyproger/sandbox/gpu-2026/3823B1PE1/4_block_gemm_cuda/lazareva_ann/block_gemm_cuda.cu".
