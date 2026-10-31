@@ -693,6 +693,7 @@ std::vector<float> GeluOCL(const std::vector<float>& input, int platform) {
 |3823B1PE1|shilin_nikita|0.2473|6|
 |3823B1PE1|ivanova_polina|0.2474|7|
 |3823B1PE4|dilshodov_adkham|0.2476|1|
+|3823B1PE1|lazareva_ann|0.2489|9|
 |3823B1PE4|remizov_kirill|0.2508|6|
 |3823B1FI3|lifanov_kirill|0.2513|1|
 |3823B1PE4|zaharov_gleb|0.2655|2|
@@ -703,7 +704,6 @@ std::vector<float> GeluOCL(const std::vector<float>& input, int platform) {
 |3823B1PE2|zorin_danila_artemovich|0.2745|2|
 |3823B1PE4|tsarkov_klim|0.2753|4|
 |3823B1PE1|golovanov_daniil|0.2818|5|
-|3823B1PE1|lazareva_ann|BUILD FAILED|-|
 |3823B1PE1|tsibareva_ekaterina|TEST FAILED|-|
 
 ## 7_layernorm_pycuda (8192x16384 elements)
@@ -799,10 +799,10 @@ Passed: 1
 ## 3823B1PE1
 |Group|Name|Passed|Score|
 |-----|----|------|-----|
-|3823B1PE1|golovanov_daniil|**8/8**|**405**|
+|3823B1PE1|golovanov_daniil|**8/8**|**404**|
 |3823B1PE1|ivanova_polina|**8/8**|**410**|
-|3823B1PE1|kondrashova_victoria|**8/8**|**394**|
-|3823B1PE1|lazareva_ann|6/8|278|
+|3823B1PE1|kondrashova_victoria|**8/8**|**393**|
+|3823B1PE1|lazareva_ann|7/8|328|
 |3823B1PE1|makoveeva_sofia|1/8|51|
 |3823B1PE1|melnik_ivan|2/8|102|
 |3823B1PE1|morozov_nikita|1/8|50|
