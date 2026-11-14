@@ -1,0 +1,9 @@
+#ifndef GPU2026_NAIVE_GEMM_CUDA_H
+#define GPU2026_NAIVE_GEMM_CUDA_H
+
+#include <vector>
+
+std::vector<float> NaiveGemmCUDA(const std::vector<float>& a,
+                               const std::vector<float>& b, int n);
+
+#endif
