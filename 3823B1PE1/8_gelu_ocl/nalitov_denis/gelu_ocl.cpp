@@ -22,13 +22,13 @@ __kernel void gelu(__global float* data, const int n) {
     if (base + 4 <= n) {
         const float4 x = vload4(lane, data);
         const float4 scaled = x * (kScale + kCubic * x * x);
-        vstore4(x / (1.0f + native_exp(-scaled)), lane, data);
+        vstore4(x / (1.0f + exp(-scaled)), lane, data);
         return;
     }
     for (int i = base; i < n; ++i) {
         const float x = data[i];
         const float scaled = x * (kScale + kCubic * x * x);
-        data[i] = x / (1.0f + native_exp(-scaled));
+        data[i] = x / (1.0f + exp(-scaled));
     }
 }
 )CLC";
@@ -114,8 +114,7 @@ struct OpenClRuntime {
         const char* source = kKernelSource;
         program = clCreateProgramWithSource(context, 1, &source, nullptr, &status);
         throw_if_cl_error(status);
-        throw_if_cl_error(clBuildProgram(program, 1, &device, "-cl-fast-relaxed-math", nullptr,
-                                         nullptr));
+        throw_if_cl_error(clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr));
 
         kernel = clCreateKernel(program, "gelu", &status);
         throw_if_cl_error(status);
